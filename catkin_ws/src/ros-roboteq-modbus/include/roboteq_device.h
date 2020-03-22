@@ -12,7 +12,7 @@
 #include <fcntl.h>
 #include "serial/serial.h"
 
-// MODBUS ASCII command/query mapping
+// MODBUS ASCII command/reg mapping
 #define COMMAND_AC 0x00C0
 #define COMMAND_AO 0x0320
 #define COMMAND_ASW 0x03C0
@@ -149,23 +149,32 @@ const int ROBOTEQ_FS_SCRIPT_RUNNING = 128;
 
 class RoboteqDevice {
   public:
-    RoboteqDevice(std::string _device, int _baud);
+    RoboteqDevice(std::string _device, int _baud, int _num_channels);
     ~RoboteqDevice();
 
-    const std::vector<double>        getVoltage();
-    const std::vector<double>        getCurrent();
+    void                             commandGo(unsigned int channel, int value);
     const std::vector<signed int>    getBrushlessCount();
+    const std::vector<double>        getBrushlessSpeed();
+    const std::vector<int>           getClosedLoopError();
+    const std::vector<double>        getCurrent();
+    const std::vector<unsigned int>  getFirmwareID();
+    const std::vector<unsigned int>  getFlagsRuntime();
+    const unsigned int               getFlagsStatus();
+    const unsigned int               getFlagsFault();
+    const std::vector<double>        getVoltage();
 
   private:
-    bool connect();
-    bool disconnect();
+    bool                             connect();
+    bool                             disconnect();
+    unsigned char                    LRC(std::vector<unsigned char> msg);
+    uint32_t                         modbusParseQueryResponse(std::string input);
+    const std::string                modbusReadInputRegisters(unsigned int reg, unsigned int offset);
+    const std::string                modbusWriteHoldingRegisters(unsigned int reg, unsigned int offset, uint32_t value);
 
-    unsigned char LRC(std::vector<unsigned char> msg);
-    unsigned long int modbusParseQueryResponse(std::string input);
-    const std::string modbusQueryString(unsigned int query, unsigned int index);
-    std::string port;
-    serial::Serial ser;
-    int baud;
+    int                              baud;
+    int                              num_channels;
+    std::string                      port;
+    serial::Serial                   ser;
 };
 
 #endif // _roboteq_device_dot_h
