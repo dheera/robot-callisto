@@ -161,6 +161,7 @@ class RoboteqDevice {
     const std::vector<uint16_t>      getFlagsRuntime();
     const uint16_t                   getFlagsStatus();
     const uint16_t                   getFlagsFault();
+    const std::vector<float>         getRotorAngle();
     const std::vector<float>         getTemperature();
     const std::vector<float>         getVoltage();
 

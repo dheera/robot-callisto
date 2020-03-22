@@ -115,6 +115,15 @@ const uint16_t RoboteqDevice::getFlagsFault() {
   return (uint16_t)modbusParseQueryResponse(readLine());
 }
 
+const std::vector<float> RoboteqDevice::getRotorAngle() {
+  std::vector<float> result(num_channels, 0);
+  for(int i=1;i<=num_channels;i++) {
+    writeLine(modbusReadInputRegisters(QUERY_ANG, i));
+    result[i-1] = (float)(uint16_t)modbusParseQueryResponse(readLine()) / 512.0 * 6.283185307179586;
+  }
+  return result;
+}
+
 const std::vector<float> RoboteqDevice::getTemperature() {
   std::vector<float> result(num_channels+1, 0.0);
   for(int i=1;i<=num_channels+1;i++) {
