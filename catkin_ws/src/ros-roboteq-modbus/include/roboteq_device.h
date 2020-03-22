@@ -153,15 +153,16 @@ class RoboteqDevice {
     ~RoboteqDevice();
 
     void                             commandGo(unsigned int channel, int value);
-    const std::vector<signed int>    getBrushlessCount();
-    const std::vector<double>        getBrushlessSpeed();
-    const std::vector<int>           getClosedLoopError();
-    const std::vector<double>        getCurrent();
-    const std::vector<unsigned int>  getFirmwareID();
-    const std::vector<unsigned int>  getFlagsRuntime();
-    const unsigned int               getFlagsStatus();
-    const unsigned int               getFlagsFault();
-    const std::vector<double>        getVoltage();
+    const std::vector<int32_t>       getBrushlessCount();
+    const std::vector<float>         getBrushlessSpeed();
+    const std::vector<int32_t>       getClosedLoopError();
+    const std::vector<float>         getCurrent();
+    const std::vector<uint16_t>      getFirmwareID();
+    const std::vector<uint16_t>      getFlagsRuntime();
+    const uint16_t                   getFlagsStatus();
+    const uint16_t                   getFlagsFault();
+    const std::vector<float>         getTemperature();
+    const std::vector<float>         getVoltage();
 
   private:
     bool                             connect();
@@ -170,6 +171,8 @@ class RoboteqDevice {
     uint32_t                         modbusParseQueryResponse(std::string input);
     const std::string                modbusReadInputRegisters(unsigned int reg, unsigned int offset);
     const std::string                modbusWriteHoldingRegisters(unsigned int reg, unsigned int offset, uint32_t value);
+    bool writeLine(std::string line);
+    std::string readLine();
 
     int                              baud;
     int                              num_channels;

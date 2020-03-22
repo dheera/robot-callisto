@@ -24,8 +24,9 @@ bool RoboteqDevice::connect() {
       ser.open();
 
       // put roboteq in modbus ascii mode
-      ser.write("^DMOD 3\r\n");
-      ser.readline();
+      writeLine("");
+      writeLine("^DMOD 3");
+      readLine();
 
   } catch(serial::IOException& e) {
       return false;
@@ -44,87 +45,114 @@ bool RoboteqDevice::disconnect() {
 }
 
 void RoboteqDevice::commandGo(unsigned int channel, int value) {
-  ser.write(modbusWriteHoldingRegisters(COMMAND_G, channel, value));
-  std::cout << ser.readline();
+  writeLine(modbusWriteHoldingRegisters(COMMAND_G, channel, value));
+  // TODO: verify command was successful. example successful outputs:
+  // :011000020002EB
+  // :011000010002EC
 }
 
-const std::vector<int> RoboteqDevice::getBrushlessCount() {
-  std::vector<int> result;
+const std::vector<int32_t> RoboteqDevice::getBrushlessCount() {
+  std::vector<int32_t> result(num_channels, 0);
   for(int i=1;i<=num_channels;i++) {
-    ser.write(modbusReadInputRegisters(QUERY_CB, i));
-    result.push_back((int)modbusParseQueryResponse(ser.readline()));
+    writeLine(modbusReadInputRegisters(QUERY_CB, i));
+    result[i-1] = (int32_t)modbusParseQueryResponse(readLine());
   }
   return result;
 }
 
-const std::vector<double> RoboteqDevice::getBrushlessSpeed() {
-  std::vector<double> result;
+const std::vector<float> RoboteqDevice::getBrushlessSpeed() {
+  std::vector<float> result(num_channels, 0.0);
   for(int i=1;i<=num_channels;i++) {
-    ser.write(modbusReadInputRegisters(QUERY_CB, i));
-    result.push_back((double)modbusParseQueryResponse(ser.readline()));
+    writeLine(modbusReadInputRegisters(QUERY_BS, i));
+    result[i-1] = (float)(int16_t)(uint16_t)modbusParseQueryResponse(readLine());
   }
   return result;
 }
 
-const std::vector<int> RoboteqDevice::getClosedLoopError() {
-  std::vector<int> result;
+const std::vector<int32_t> RoboteqDevice::getClosedLoopError() {
+  std::vector<int32_t> result(num_channels, 0);
   for(int i=1;i<=num_channels;i++) {
-    ser.write(modbusReadInputRegisters(QUERY_E, i));
-    result.push_back((int)modbusParseQueryResponse(ser.readline()));
+    writeLine(modbusReadInputRegisters(QUERY_E, i));
+    result[i-1] = (int32_t)modbusParseQueryResponse(readLine());
   }
   return result;
 }
 
-const std::vector<double> RoboteqDevice::getCurrent() {
-  std::vector<double> result;
+const std::vector<float> RoboteqDevice::getCurrent() {
+  std::vector<float> result(num_channels, 0.0);
   for(int i=1;i<=num_channels;i++) {
-    ser.write(modbusReadInputRegisters(QUERY_A, i));
-    result.push_back((double)(int)modbusParseQueryResponse(ser.readline()) / 10.0);
+    writeLine(modbusReadInputRegisters(QUERY_A, i));
+    result[i-1] = (float)(int16_t)(uint16_t)modbusParseQueryResponse(readLine()) / 10.0;
   }
   return result;
 }
 
-const std::vector<unsigned int> RoboteqDevice::getFirmwareID() {
-  std::vector<unsigned int> result;
+const std::vector<uint16_t> RoboteqDevice::getFirmwareID() {
+  std::vector<uint16_t> result(4, 0);
   for(int i=1;i<=4;i++) {
-    ser.write(modbusReadInputRegisters(QUERY_FIN, i));
-    result.push_back((unsigned int)modbusParseQueryResponse(ser.readline()));
+    writeLine(modbusReadInputRegisters(QUERY_FIN, i));
+    result[i-1] = (uint16_t)modbusParseQueryResponse(readLine());
   }
   return result;
 }
 
-const std::vector<unsigned int> RoboteqDevice::getFlagsRuntime() {
-  std::vector<unsigned int> result;
+const std::vector<uint16_t> RoboteqDevice::getFlagsRuntime() {
+  std::vector<uint16_t> result(num_channels, 0);
   for(int i=1;i<=num_channels;i++) {
-    ser.write(modbusReadInputRegisters(QUERY_FM, i));
-    result.push_back((unsigned int)modbusParseQueryResponse(ser.readline()));
+    writeLine(modbusReadInputRegisters(QUERY_FM, i));
+    result[i-1] = (uint16_t)modbusParseQueryResponse(readLine());
   }
   return result;
 }
 
-const unsigned int RoboteqDevice::getFlagsStatus() {
-  ser.write(modbusReadInputRegisters(QUERY_FS, 1));
-  return (unsigned int)modbusParseQueryResponse(ser.readline());
+const uint16_t RoboteqDevice::getFlagsStatus() {
+  writeLine(modbusReadInputRegisters(QUERY_FS, 0));
+  return (uint16_t)modbusParseQueryResponse(readLine());
 }
 
-const unsigned int RoboteqDevice::getFlagsFault() {
-  ser.write(modbusReadInputRegisters(QUERY_FF, 1));
-  return (unsigned int)modbusParseQueryResponse(ser.readline());
+const uint16_t RoboteqDevice::getFlagsFault() {
+  writeLine(modbusReadInputRegisters(QUERY_FF, 0));
+  return (uint16_t)modbusParseQueryResponse(readLine());
 }
 
-const std::vector<double> RoboteqDevice::getVoltage() {
-  std::vector<double> result = {0.0,0.0,0.0};
+const std::vector<float> RoboteqDevice::getTemperature() {
+  std::vector<float> result(num_channels+1, 0.0);
+  for(int i=1;i<=num_channels+1;i++) {
+    writeLine(modbusReadInputRegisters(QUERY_T, i));
+    result[i-1] = (float)(int16_t)(uint16_t)modbusParseQueryResponse(readLine());
+  }
+  return result;
+}
 
-  ser.write(modbusReadInputRegisters(QUERY_V, 1));
-  result[0] = (double)(signed int)modbusParseQueryResponse(ser.readline()) / 10.0;
+const std::vector<float> RoboteqDevice::getVoltage() {
+  if(!ser.isOpen()) connect();
 
-  ser.write(modbusReadInputRegisters(QUERY_V, 2));
-  result[1] = (double)(signed int)modbusParseQueryResponse(ser.readline()) / 10.0;
+  std::vector<float> result(3, 0.0);
 
-  ser.write(modbusReadInputRegisters(QUERY_V, 3));
-  result[2] = (double)(signed int)modbusParseQueryResponse(ser.readline()) / 1000.0;
+  writeLine(modbusReadInputRegisters(QUERY_V, 1));
+  result[0] = ((float)(int16_t)(uint16_t)modbusParseQueryResponse(readLine())) / 10.0;
+
+  writeLine(modbusReadInputRegisters(QUERY_V, 2));
+  result[1] = ((float)(int16_t)(uint16_t)modbusParseQueryResponse(readLine())) / 10.0;
+
+  writeLine(modbusReadInputRegisters(QUERY_V, 3));
+  result[2] = ((float)(int16_t)(uint16_t)modbusParseQueryResponse(readLine())) / 1000.0;
 
   return result;
+}
+
+bool RoboteqDevice::writeLine(std::string line) {
+  if(!ser.isOpen()) return false;
+
+  ser.flush();
+  ser.read(ser.available());
+  ser.write(line + "\r\n");
+
+  return true;
+}
+
+std::string RoboteqDevice::readLine() {
+  return ser.readline((size_t)65536, "\r\n");
 }
 
 unsigned char RoboteqDevice::LRC(std::vector<unsigned char> msg) {
@@ -193,7 +221,6 @@ const std::string RoboteqDevice::modbusWriteHoldingRegisters(unsigned int reg, u
     output << std::setw(2) << static_cast<unsigned>(msg_bytes[i]);
   }
 
-  output << "\r\n";
   return output.str();
 }
 
@@ -220,7 +247,6 @@ const std::string RoboteqDevice::modbusReadInputRegisters(unsigned int reg, unsi
     output << std::setw(2) << static_cast<unsigned>(msg_bytes[i]);
   }
 
-  output << "\r\n";
   return output.str();
 }
 
