@@ -7,26 +7,28 @@ from std_msgs.msg import Int16MultiArray
 if __name__ == "__main__":
     rospy.init_node("roboteq_test_node")
 
-    pub_command = rospy.Publisher("command", Int16MultiArray, queue_size = 1)
+    pub_command = rospy.Publisher("/motor/command", Int16MultiArray, queue_size = 1)
 
     msg = Int16MultiArray()
 
-    for i in range(100):
+    MAX = 200
+
+    for i in range(MAX):
         msg.data = [i,i]
         pub_command.publish(msg)
         time.sleep(0.02)
 
-    for i in reversed(range(100)):
+    for i in reversed(range(MAX)):
         msg.data = [i,i]
         pub_command.publish(msg)
         time.sleep(0.02)
 
-    for i in range(100):
+    for i in range(MAX):
         msg.data = [-i,-i]
         pub_command.publish(msg)
         time.sleep(0.02)
 
-    for i in reversed(range(100)):
+    for i in reversed(range(MAX)):
         msg.data = [-i,-i]
         pub_command.publish(msg)
         time.sleep(0.02)
