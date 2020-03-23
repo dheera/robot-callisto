@@ -4,8 +4,12 @@ import math
 import numpy as np
 import rospy
 import time
+
+from pid import PID
+
 from sensor_msgs.msg import Imu
-from std_msgs.msg import Int16MultiArray, Int32MultiArray
+from geometry_msgs.msg import Twist
+from std_msgs.msg import Int16MultiArray, Int32MultiArray, Float32
 
 last_imu = (0.0, 0.0, 0.0)
 
@@ -23,12 +27,15 @@ def on_imu_data(msg):
       roll -= 2*math.pi
     last_imu = yaw, pitch, roll
 
+    pub_pitch.publish(pitch)
+
 motor_count_history = np.zeros((10, 3), dtype=np.int64) #(ch1, ch2, time)
 motor_count_index = 0
 velocity = (0.0, 0.0)
+velocity_linear = 0.0
 
 def on_motor_count(msg):
-    global velocity, motor_count_index, motor_count_history
+    global velocity, velocity_linear, velocity_angular, motor_count_index, motor_count_history
 
     if len(msg.data) != 2:
         return
@@ -39,8 +46,17 @@ def on_motor_count(msg):
     diff = motor_count_history[motor_count_index, :] - motor_count_history[index_new, :]
 
     velocity = M_PER_TICK * diff[0] / diff[2] * 1000.0 , M_PER_TICK * diff[1] / diff[2] * 1000.0
+    velocity_linear = (velocity[0] + velocity[1]) / 2
+    velocity_angular = (velocity[0] - velocity[1]) / 2
 
     motor_count_index = index_new
+
+    pub_velocity_linear.publish(velocity_linear)
+    pub_velocity_angular.publish(velocity_angular)
+
+def on_cmd_vel(msg):
+    global last_cmd_vel, pid_velocity_linear
+    pid_velocity_linear.target = msg.linear.x
 
 if __name__ == "__main__":
     rospy.init_node("balance_node")
@@ -48,12 +64,17 @@ if __name__ == "__main__":
     TOPIC_MOTOR_COMMAND = "/motor/command"
     TOPIC_MOTOR_COUNT = "/motor/brushless_count"
     TOPIC_IMU_DATA = "/imu/data"
+    TOPIC_CMD_VEL = "/cmd_vel/input/4"
     M_PER_TICK = 10.0 * 25.4 / 1000.0 * 3.14159265358979 / 90.0
-    print(M_PER_TICK)
 
     pub_motor_command = rospy.Publisher(TOPIC_MOTOR_COMMAND, Int16MultiArray, queue_size = 1)
+    pub_pitch = rospy.Publisher("pitch", Float32, queue_size = 1)
+    pub_velocity_linear = rospy.Publisher("velocity_linear", Float32, queue_size = 1)
+    pub_velocity_angular = rospy.Publisher("velocity_angular", Float32, queue_size = 1)
     sub_motor_count = rospy.Subscriber(TOPIC_MOTOR_COUNT, Int32MultiArray, on_motor_count)
     sub_imu_data = rospy.Subscriber(TOPIC_IMU_DATA, Imu, on_imu_data)
+
+    sub_cmd_vel = rospy.Subscriber(TOPIC_CMD_VEL, Twist, on_cmd_vel)
 
     rate = rospy.Rate(30)
 
@@ -61,13 +82,24 @@ if __name__ == "__main__":
 
     msg_command = Int16MultiArray()
 
+    pid_tilt = PID(KP=200.0, KI = 20.0, KD = 0.0, I_LIMIT = 10.0)
+    pid_velocity_linear = PID(KP=-1.0, KI = 0.0, KD = 0.1)
+
     while not rospy.is_shutdown():
         rate.sleep()
 
         pitch = last_imu[1]
         command = -int(kp * pitch)
 
-        print("pitch={} velocity={}".format(pitch, (velocity[0] + velocity[1]) / 2))
+        # print("pitch={} velocity={}".format(pitch, velocity_linear))
 
-        msg_command.data = [command, command]
+        tilt_term = pid_tilt.update(pitch)
+        velocity_term = pid_velocity_linear.update(velocity_linear)
+
+        print("tilt_term = {} velocity_term = {}".format(tilt_term, velocity_term))
+
+        command_left = tilt_term
+        command_right = tilt_term
+
+        msg_command.data = [int(command_left), int(command_right)]
         pub_motor_command.publish(msg_command)
