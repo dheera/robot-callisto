@@ -9,7 +9,9 @@ class PID:
     """
 
     def __init__(self, KP=1.0, KI=1.0, KD=1.0, I_LIMIT = 100., \
-      circular = False, debug_callback = None):
+      circular = False, samples = 5, debug_callback = None):
+
+        self.samples = samples
 
         # PID constants
         self.KP = KP
@@ -37,10 +39,10 @@ class PID:
         self.index = 0
 
         # recent error values
-        self.errors = [ 0.0 ] * 5
+        self.errors = [ 0.0 ] * self.samples
 
         # recent timestamp values (parallel array to above)
-        self.times = [ 0.0 ] * 5
+        self.times = [ 0.0 ] * self.samples
 
         self.error_p = 0.0
         self.error_i = 0.0
@@ -81,7 +83,7 @@ class PID:
         # COMPUTE INTEGRAL
 
         # time step here is only the diff between current and past sample
-        time_step = self.times[self.index] - self.times[(self.index - 1) % 5]
+        time_step = self.times[self.index] - self.times[(self.index - 1) % self.samples]
         # impose upper bound on time step (to avoid jump from 0 to unix time)
         time_step = min(time_step, 0.1)
         self.error_i += self.error_p * time_step
@@ -89,16 +91,16 @@ class PID:
 
         # COMPUTE DIFFERENTIAL
 
-        # time_step here is over all 5 samples
-        time_step = self.times[self.index] - self.times[(self.index + 1) % 5]
+        # time_step here is over all self.samples=5 samples
+        time_step = self.times[self.index] - self.times[(self.index + 1) % self.samples]
         # impose lower bound on time step (to avoid divide by zero error)
         time_step = max(time_step, 0.001)
         self.error_d = (self.errors[self.index] \
-                    - self.errors[(self.index + 1) % 5]) \
+                    - self.errors[(self.index + 1) % self.samples]) \
                     / (time_step)
 
         # increment index for next irritation
-        self.index = (self.index + 1) % 5
+        self.index = (self.index + 1) % self.samples
 
         # COMPUTE CORRECTION
 
@@ -146,6 +148,6 @@ class PID:
         self.error_p = 0.0
         self.error_i = 0.0
         self.error_d = 0.0
-        self.errors = [ 0.0 ] * 5
+        self.errors = [ 0.0 ] * self.samples
         if callable(self.debug_callback):
             self.debug_callback("reset")
