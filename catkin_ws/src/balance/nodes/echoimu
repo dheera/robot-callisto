@@ -1,0 +1,30 @@
+#!/usr/bin/env python3
+
+import math
+import rospy
+import sys
+import time
+
+from sensor_msgs.msg import Imu
+
+def on_imu_data(msg):
+    global last_imu
+    mag = (msg.orientation.x**2 + msg.orientation.y**2 + msg.orientation.z**2 + msg.orientation.w**2)**0.5
+    a = msg.orientation.x / mag
+    b = msg.orientation.y / mag
+    c = msg.orientation.z / mag
+    d = msg.orientation.w / mag
+    yaw = math.atan2(2*a*b+2*c*d, 1-2*b*b-2*c*c)
+    pitch = math.asin(2*(a*c-b*d))
+    roll = math.atan2(2*a*d+2*b*c, 1-2*c*c-2*d*d)+math.pi
+    if roll > math.pi:
+      roll -= 2*math.pi
+
+    print("yaw=%f pitch=%f roll=%f" % (yaw, pitch, roll))
+
+if __name__ == "__main__":
+    rospy.init_node("echoimu")
+
+    TOPIC_IMU_DATA = "/imu/data"
+    sub_imu_data = rospy.Subscriber(TOPIC_IMU_DATA, Imu, on_imu_data)
+    rospy.spin()

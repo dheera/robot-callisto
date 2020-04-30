@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+
+import math
+import numpy as np
+import rospy
+import sys
+import time
+
+from pid import PID
+
+from sensor_msgs.msg import Imu
+from geometry_msgs.msg import Twist
+from std_msgs.msg import Int16MultiArray, Int32MultiArray, Float32
+
+last_imu = (0.0, 0.0, 0.0)
+
+def on_imu_data(msg):
+    global last_imu
+    mag = (msg.orientation.x**2 + msg.orientation.y**2 + msg.orientation.z**2 + msg.orientation.w**2)**0.5
+    a = msg.orientation.x / mag
+    b = msg.orientation.y / mag
+    c = msg.orientation.z / mag
+    d = msg.orientation.w / mag
+    yaw = math.atan2(2*a*b+2*c*d, 1-2*b*b-2*c*c)
+    pitch = math.asin(2*(a*c-b*d))
+    roll = math.atan2(2*a*d+2*b*c, 1-2*c*c-2*d*d)+math.pi
+    if roll > math.pi:
+      roll -= 2*math.pi
+
+    pitch -= PITCH_BIAS
+
+    last_imu = yaw, pitch, roll
+
+    pub_pitch.publish(pitch)
+
+motor_count_history = np.zeros((10, 3), dtype=np.int64) #(ch1, ch2, time)
+motor_count_index = 0
+velocity = (0.0, 0.0)
+velocity_linear = 0.0
+
+last_motor_counts = None
+position_target = None
+def on_motor_count(msg):
+    global velocity, velocity_linear, velocity_angular, motor_count_index, motor_count_history, last_motor_counts, position_target
+
+    if len(msg.data) != 2:
+        return
+
+    if last_motor_counts is not None:
+        if abs(last_motor_counts[0] - msg.data[0]) > 1000:
+            last_motor_counts = msg.data[0]
+            print("erratic count")
+            return
+        if abs(last_motor_counts[1] - msg.data[1]) > 1000:
+            last_motor_counts = msg.data[1]
+            print("erratic count")
+            return
+
+    if position_target is None:
+        position_target = msg.data[0], msg.data[1]
+
+    last_motor_counts = msg.data[0], msg.data[1]
+
+def on_cmd_vel(msg):
+    global last_cmd_vel, pid_velocity_linear
+    pid_velocity_linear.target = pid_velocity_linear.target*0.5 + msg.linear.x*0.5
+
+if __name__ == "__main__":
+    rospy.init_node("balance_node")
+
+    TOPIC_MOTOR_COMMAND = "/motor/command"
+    TOPIC_MOTOR_COUNT = "/motor/brushless_count"
+    TOPIC_IMU_DATA = "/imu/data"
+    TOPIC_CMD_VEL = "/cmd_vel/input/4"
+    M_PER_TICK = 10.0 * 25.4 / 1000.0 * 3.14159265358979 / 90.0
+    PITCH_BIAS = -.033 # 0 #-0.018989684503084785 + .012856
+    MAX_COMMAND = 100
+
+    pub_motor_command = rospy.Publisher(TOPIC_MOTOR_COMMAND, Int16MultiArray, queue_size = 1)
+    pub_pitch = rospy.Publisher("pitch", Float32, queue_size = 1)
+    pub_velocity_linear = rospy.Publisher("velocity_linear", Float32, queue_size = 1)
+    pub_velocity_angular = rospy.Publisher("velocity_angular", Float32, queue_size = 1)
+    sub_motor_count = rospy.Subscriber(TOPIC_MOTOR_COUNT, Int32MultiArray, on_motor_count)
+    sub_imu_data = rospy.Subscriber(TOPIC_IMU_DATA, Imu, on_imu_data)
+
+    sub_cmd_vel = rospy.Subscriber(TOPIC_CMD_VEL, Twist, on_cmd_vel)
+
+    rate = rospy.Rate(30)
+
+    kp = 200
+
+    msg_command = Int16MultiArray()
+
+    pid_tilt = PID(KP=500.0, KI = 1200.0, KD = 0.0, I_LIMIT = 0.09) # , debug_callback = print)
+    pid_position = PID(KP=40.0, KI = 0.0, KD = 0.0, I_LIMIT = 0.5, debug_callback = print)
+
+    while not rospy.is_shutdown():
+        rate.sleep()
+
+        pitch = last_imu[1]
+        command = -int(kp * pitch)
+
+        print("pitch={} position={}".format(pitch, velocity_linear))
+
+        if position_target is not None and last_motor_counts is not None:
+            pid_position.target = position_target[0] + position_target[1]
+            position_term = pid_position.update(last_motor_counts[0]+last_motor_counts[1])
+
+            pid_tilt.target = -position_term / 30000.
+            # print("FOO", -position_term / 1000.)
+
+        tilt_term = pid_tilt.update(pitch)
+
+        print("tilt_term = {} position_term = {}".format(tilt_term, position_term))
+
+        command_left = tilt_term #- velocity_term
+        command_right = tilt_term #- velocity_term
+
+        command_left = np.clip(command_left, -MAX_COMMAND, MAX_COMMAND)
+        command_right = np.clip(command_right, -MAX_COMMAND, MAX_COMMAND)
+
+        msg_command.data = [int(command_left), int(command_right)]
+        pub_motor_command.publish(msg_command)

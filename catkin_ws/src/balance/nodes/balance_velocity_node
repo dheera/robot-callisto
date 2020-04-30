@@ -1,0 +1,182 @@
+#!/usr/bin/env python3
+
+import math
+import numpy as np
+import rospy
+import sys
+import time
+
+from pid import PID
+
+from sensor_msgs.msg import Imu
+from geometry_msgs.msg import Twist
+from std_msgs.msg import Int16MultiArray, Int32MultiArray, Float32
+
+last_imu = (0.0, 0.0, 0.0)
+
+last_imu_raw = (0.0, 0.0, 0.0)
+def on_imu_raw(msg):
+    global last_imu_raw
+    last_imu_raw = msg.linear_acceleration.x, msg.linear_acceleration.y, msg.linear_acceleration.z
+
+def on_imu_data(msg):
+    global last_imu
+    mag = (msg.orientation.x**2 + msg.orientation.y**2 + msg.orientation.z**2 + msg.orientation.w**2)**0.5
+    a = msg.orientation.x / mag
+    b = msg.orientation.y / mag
+    c = msg.orientation.z / mag
+    d = msg.orientation.w / mag
+    yaw = math.atan2(2*a*b+2*c*d, 1-2*b*b-2*c*c)
+    pitch = math.asin(2*(a*c-b*d))
+    roll = math.atan2(2*a*d+2*b*c, 1-2*c*c-2*d*d)+math.pi
+    if roll > math.pi:
+      roll -= 2*math.pi
+
+    pitch -= PITCH_BIAS
+
+    last_imu = yaw, pitch, roll
+
+    pub_pitch.publish(pitch)
+
+motor_count_history = np.zeros((10, 3), dtype=np.int64) #(ch1, ch2, time)
+motor_count_index = 0
+velocity = (0.0, 0.0)
+velocity_linear = 0.0
+
+last_motor_counts = None
+def on_motor_count(msg):
+    global velocity, velocity_linear, velocity_angular, motor_count_index, motor_count_history, last_motor_counts
+
+    if len(msg.data) != 2:
+        return
+
+    if last_motor_counts is not None:
+        if abs(last_motor_counts.data[0] - msg.data[0]) > 1000:
+            last_motor_counts = msg
+            print("erratic count")
+            return
+        if abs(last_motor_counts.data[1] - msg.data[1]) > 1000:
+            last_motor_counts = msg
+            print("erratic count")
+            return
+
+    index_new = (motor_count_index+1) % 10
+    motor_count_history[motor_count_index % 10, :] = [msg.data[0], msg.data[1], time.time()*1000]
+
+    diff = motor_count_history[motor_count_index, :] - motor_count_history[index_new, :]
+
+    velocity = M_PER_TICK * diff[0] / diff[2] * 1000.0 , M_PER_TICK * diff[1] / diff[2] * 1000.0
+    velocity_linear = (velocity[0] + velocity[1]) / 2
+    velocity_angular = (velocity[0] - velocity[1]) / 2
+
+    if abs(velocity_linear) > 3.0 or abs(velocity_angular) > 3.0:
+        print("ERROR IN VELOCITY COMPUTATION!")
+        print("motor_count_history", motor_count_history)
+        print("motor_count_index", motor_count_index)
+        sys.exit()
+
+    motor_count_index = index_new
+
+    pub_velocity_linear.publish(velocity_linear)
+    pub_velocity_angular.publish(velocity_angular)
+
+    last_motor_counts = msg
+
+def on_cmd_vel(msg):
+    global last_cmd_vel, pid_velocity_linear
+    pid_velocity_linear.target = pid_velocity_linear.target*0.5 + msg.linear.x*0.5
+
+if __name__ == "__main__":
+    rospy.init_node("balance_node")
+
+    TOPIC_MOTOR_COMMAND = "/motor/command"
+    TOPIC_MOTOR_COUNT = "/motor/brushless_count"
+    TOPIC_IMU_DATA = "/imu/fused"
+    TOPIC_IMU_RAW = "/imu/raw"
+    TOPIC_CMD_VEL = "/cmd_vel/input/4"
+    M_PER_TICK = 10.0 * 25.4 / 1000.0 * 3.14159265358979 / 90.0
+    #PITCH_BIAS = -0.015 # .01 #-.033 # 0 #-0.018989684503084785 + .012856
+    PITCH_BIAS = -0.00 # .01 #-.033 # 0 #-0.018989684503084785 + .012856
+    MAX_COMMAND = 100
+
+    pub_motor_command = rospy.Publisher(TOPIC_MOTOR_COMMAND, Int16MultiArray, queue_size = 1)
+    pub_pitch = rospy.Publisher("pitch", Float32, queue_size = 1)
+    pub_velocity_linear = rospy.Publisher("velocity_linear", Float32, queue_size = 1)
+    pub_velocity_angular = rospy.Publisher("velocity_angular", Float32, queue_size = 1)
+    sub_motor_count = rospy.Subscriber(TOPIC_MOTOR_COUNT, Int32MultiArray, on_motor_count)
+    sub_imu_data = rospy.Subscriber(TOPIC_IMU_DATA, Imu, on_imu_data)
+    sub_imu_raw = rospy.Subscriber(TOPIC_IMU_RAW, Imu, on_imu_raw)
+
+    sub_cmd_vel = rospy.Subscriber(TOPIC_CMD_VEL, Twist, on_cmd_vel)
+
+    rate = rospy.Rate(100)
+
+    kp = 200
+
+    msg_command = Int16MultiArray()
+
+    pid_tilt = PID(KP=1200.0, KI = 2000.0, KD = 40.0, I_LIMIT = 0.15, debug_callback = print)
+#    pid_tilt = PID(KP=300.0, KI = 1000.0, KD = 0.0, I_LIMIT = 0.09) # , debug_callback = print)
+    #pid_tilt = PID(KP=30.0, KI = 100.0, KD = 0.0, I_LIMIT = 0.9) # , debug_callback = print)
+    pid_velocity_linear = PID(KP=50.0, KI = 0.0, KD = 0.0, I_LIMIT = 0.5) #, debug_callback = print)
+
+    last_command_left = 0
+    last_command_right = 0
+    total_command = 0
+
+    while not rospy.is_shutdown():
+        rate.sleep()
+        if velocity_linear is None:
+            continue
+
+        def sign(x):
+            if x < 0:
+                return -1
+            else:
+                return 1
+
+        pitch = last_imu[1]
+
+        if abs(pitch) > 3.14159/8:
+            pid_tilt.reset()
+            pid_velocity_linear.reset()
+            msg_command.data = [0, 0]
+            pub_motor_command.publish(msg_command)
+            continue
+
+        # pitch = 1*last_imu_raw[0] / 10.
+        # pitch = sign(pitch) * (pitch / 0.1) ** 2 * 0.1
+
+        print("pitch={} velocity={}".format(pitch, velocity_linear))
+        velocity_term = pid_velocity_linear.update(velocity_linear)
+        # pid_tilt.target = -velocity_term / 300.
+
+        pitch_foo = pitch #- 0.00003 * total_command
+
+        tilt_term = pid_tilt.update(pitch_foo)
+
+        print("tilt_term = {} velocity_term = {}".format(tilt_term, velocity_term))
+
+        command_left = tilt_term #- velocity_term
+        command_right = tilt_term #- velocity_term
+
+        command_left = np.clip(command_left, -MAX_COMMAND, MAX_COMMAND)
+        command_right = np.clip(command_right, -MAX_COMMAND, MAX_COMMAND)
+
+        total_command = total_command * 0.8 + 0.2 * (command_left + command_right)
+
+#        command_left = sign(command_left) * math.sqrt(sign(command_left) * command_left / MAX_COMMAND) * MAX_COMMAND
+#        command_right = sign(command_right) * math.sqrt(sign(command_right) * command_right / MAX_COMMAND) * MAX_COMMAND
+
+        last_command_left = last_command_left * 0.8 + command_left * 0.2
+        last_command_right = last_command_right * 0.8 + command_right * 0.2
+
+        final_command_left = last_command_left
+        final_command_right = last_command_right
+        #if abs(final_command_left) < 10:
+        #    final_command_left = 0
+        #if abs(final_command_right) < 10:
+        #    final_command_right = 0
+
+        msg_command.data = [int(final_command_left), int(final_command_right)]
+        pub_motor_command.publish(msg_command)

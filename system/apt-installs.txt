@@ -20,6 +20,7 @@ ros-melodic-gscam
 ros-melodic-serial
 ros-melodic-rosbridge-suite
 ros-melodic-web-video-server
+ros-melodic-imu-filter-madgwick
 screen
 vim
 wget
